@@ -1,5 +1,12 @@
-export H_DIR=/home/mgering
-rm -fr $HDIR/.openclaw
+# Load environment variables from .env if it exists
+if [ -f .env ]; then
+    set -a  # automatically export all variables
+    source .env
+    set +a
+fi
+
+export HDIR=/home/mgering
+# rm -fr $HDIR/.openclaw
 rm -fr $HDIR/clawd
 rm -fr $HDIR/clawd-main
 echo Removing openclaw...
@@ -18,3 +25,5 @@ export OPENCLAW_INSTALL_METHOD=git
 export OPENCLAW_GIT_DIR=/home/mgering/projects/openclaw_install
 export OPENCLAW_GIT_UPDATE=1
 curl -fsSL https://openclaw.ai/install.sh | bash
+read -n 1 -s -r -p "Press any key to continue with onboarding..."
+openclaw onboard --accept-risk --anthropic-api-key $ANTHROPIC_API_KEY
