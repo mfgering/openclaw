@@ -1,0 +1,27 @@
+FROM hf.co/unsloth/Ministral-3-14B-Reasoning-2512-GGUF:Q8_0
+
+# Optimization for Agentic Reasoning
+PARAMETER temperature 0.3
+PARAMETER top_p 0.95
+PARAMETER stop "</s>"
+PARAMETER stop "[/TOOL_CALLS]"
+
+# Template supporting Thinking, Tools, and System prompts
+TEMPLATE """{{- if .System }}[SYSTEM_PROMPT]{{ .System }}[/SYSTEM_PROMPT]{{ end }}
+{{- if .Tools }}[AVAILABLE_TOOLS]{{ .Tools }}[/AVAILABLE_TOOLS]{{ end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}[INST]{{ .Content }}[/INST]
+{{- else if eq .Role "assistant" }}
+{{- if .Content }}{{ .Content }}{{ end }}
+{{- if .ToolCalls }}[TOOL_CALLS]
+{{- range .ToolCalls }}{"name": "{{ .Function.Name }}", "parameters": {{ .Function.Arguments }}}{{ end }}
+[/TOOL_CALLS]{{ end }}</s>
+{{- else if eq .Role "tool" }}[TOOL_RESULTS]{{ .Content }}[/TOOL_RESULTS]
+{{- end }}
+{{- end }}"""
+
+SYSTEM """# OPERATING INSTRUCTIONS
+1. Use the <think> ... </think> tags for all internal reasoning.
+2. After thinking, if a tool is required, output the tool call using the defined format.
+3. If no tool is needed, provide your final answer directly after the </think> tag.
+4. Use Markdown for all text responses."""
