@@ -20,6 +20,13 @@ export default defineConfig([
     sourcemap: true,
   },
   {
+    // Ensure this module is bundled as an entry so legacy CLI shims can resolve its exports.
+    entry: "src/cli/daemon-cli.ts",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
+  {
     entry: "src/infra/warning-filter.ts",
     env,
     fixedExtension: false,
@@ -33,6 +40,13 @@ export default defineConfig([
     fixedExtension: false,
     platform: "node",
     sourcemap: true,
+  },
+  {
+    entry: "src/plugin-sdk/account-id.ts",
+    outDir: "dist/plugin-sdk",
+    env,
+    fixedExtension: false,
+    platform: "node",
   },
   {
     entry: "src/extensionAPI.ts",

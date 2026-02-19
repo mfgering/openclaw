@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { GatewayClient } from "../src/gateway/client.js";
+import { connectGatewayClient } from "../src/gateway/test-helpers.e2e.js";
 import { loadOrCreateDeviceIdentity } from "../src/infra/device-identity.js";
 import { sleep } from "../src/utils.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../src/utils/message-channel.js";
@@ -243,15 +244,7 @@ const connectNode = async (
   const identityPath = path.join(inst.homeDir, `${label}-device.json`);
   const deviceIdentity = loadOrCreateDeviceIdentity(identityPath);
   const nodeId = deviceIdentity.deviceId;
-  let settled = false;
-  let resolveReady: (() => void) | null = null;
-  let rejectReady: ((err: Error) => void) | null = null;
-  const ready = new Promise<void>((resolve, reject) => {
-    resolveReady = resolve;
-    rejectReady = reject;
-  });
-
-  const client = new GatewayClient({
+  const client = await connectGatewayClient({
     url: `ws://127.0.0.1:${inst.port}`,
     token: inst.gatewayToken,
     clientName: GATEWAY_CLIENT_NAMES.NODE_HOST,
@@ -264,53 +257,20 @@ const connectNode = async (
     caps: ["system"],
     commands: ["system.run"],
     deviceIdentity,
-    onHelloOk: () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      resolveReady?.();
-    },
-    onConnectError: (err) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      rejectReady?.(err);
-    },
-    onClose: (code, reason) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      rejectReady?.(new Error(`gateway closed (${code}): ${reason}`));
-    },
+    timeoutMessage: `timeout waiting for ${label} to connect`,
   });
-
-  client.start();
-  try {
-    await Promise.race([
-      ready,
-      sleep(10_000).then(() => {
-        throw new Error(`timeout waiting for ${label} to connect`);
-      }),
-    ]);
-  } catch (err) {
-    client.stop();
-    throw err;
-  }
   return { client, nodeId };
 };
 
-const fetchNodeList = async (
+const connectStatusClient = async (
   inst: GatewayInstance,
   timeoutMs = 5_000,
-): Promise<NodeListPayload> => {
+): Promise<GatewayClient> => {
   let settled = false;
   let timer: NodeJS.Timeout | null = null;
 
-  return await new Promise<NodeListPayload>((resolve, reject) => {
-    const finish = (err?: Error, payload?: NodeListPayload) => {
+  return await new Promise<GatewayClient>((resolve, reject) => {
+    const finish = (err?: Error) => {
       if (settled) {
         return;
       }
@@ -318,16 +278,16 @@ const fetchNodeList = async (
       if (timer) {
         clearTimeout(timer);
       }
-      client.stop();
       if (err) {
         reject(err);
         return;
       }
-      resolve(payload ?? {});
+      resolve(client);
     };
 
     const client = new GatewayClient({
       url: `ws://127.0.0.1:${inst.port}`,
+      connectDelayMs: 0,
       token: inst.gatewayToken,
       clientName: GATEWAY_CLIENT_NAMES.CLI,
       clientDisplayName: `status-${inst.name}`,
@@ -335,10 +295,7 @@ const fetchNodeList = async (
       platform: "test",
       mode: GATEWAY_CLIENT_MODES.CLI,
       onHelloOk: () => {
-        void client
-          .request<NodeListPayload>("node.list", {})
-          .then((payload) => finish(undefined, payload))
-          .catch((err) => finish(err instanceof Error ? err : new Error(String(err))));
+        finish();
       },
       onConnectError: (err) => finish(err),
       onClose: (code, reason) => {
@@ -356,13 +313,18 @@ const fetchNodeList = async (
 
 const waitForNodeStatus = async (inst: GatewayInstance, nodeId: string, timeoutMs = 10_000) => {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const list = await fetchNodeList(inst);
-    const match = list.nodes?.find((n) => n.nodeId === nodeId);
-    if (match?.connected && match?.paired) {
-      return;
+  const client = await connectStatusClient(inst);
+  try {
+    while (Date.now() < deadline) {
+      const list = await client.request<NodeListPayload>("node.list", {});
+      const match = list.nodes?.find((n) => n.nodeId === nodeId);
+      if (match?.connected && match?.paired) {
+        return;
+      }
+      await sleep(50);
     }
-    await sleep(50);
+  } finally {
+    client.stop();
   }
   throw new Error(`timeout waiting for node status for ${nodeId}`);
 };
@@ -384,10 +346,8 @@ describe("gateway multi-instance e2e", () => {
     "spins up two gateways and exercises WS + HTTP + node pairing",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      const gwA = await spawnGatewayInstance("a");
-      instances.push(gwA);
-      const gwB = await spawnGatewayInstance("b");
-      instances.push(gwB);
+      const [gwA, gwB] = await Promise.all([spawnGatewayInstance("a"), spawnGatewayInstance("b")]);
+      instances.push(gwA, gwB);
 
       const [hookResA, hookResB] = await Promise.all([
         postJson(
@@ -412,8 +372,10 @@ describe("gateway multi-instance e2e", () => {
       expect(hookResB.status).toBe(200);
       expect((hookResB.json as { ok?: boolean } | undefined)?.ok).toBe(true);
 
-      const nodeA = await connectNode(gwA, "node-a");
-      const nodeB = await connectNode(gwB, "node-b");
+      const [nodeA, nodeB] = await Promise.all([
+        connectNode(gwA, "node-a"),
+        connectNode(gwB, "node-b"),
+      ]);
       nodeClients.push(nodeA.client, nodeB.client);
 
       await Promise.all([

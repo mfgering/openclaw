@@ -17,6 +17,7 @@ import {
   buildHuggingfaceModelDefinition,
 } from "./huggingface-models.js";
 import { resolveAwsSdkEnvVarName, resolveEnvApiKey } from "./model-auth.js";
+import { OLLAMA_NATIVE_BASE_URL } from "./ollama-stream.js";
 import {
   buildSyntheticModelDefinition,
   SYNTHETIC_BASE_URL,
@@ -32,7 +33,6 @@ import { discoverVeniceModels, VENICE_BASE_URL } from "./venice-models.js";
 type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 export type ProviderConfig = NonNullable<ModelsConfig["providers"]>[string];
 
-const MINIMAX_API_BASE_URL = "https://api.minimax.chat/v1";
 const MINIMAX_PORTAL_BASE_URL = "https://api.minimax.io/anthropic";
 const MINIMAX_DEFAULT_MODEL_ID = "MiniMax-M2.1";
 const MINIMAX_DEFAULT_VISION_MODEL_ID = "MiniMax-VL-01";
@@ -46,6 +46,33 @@ const MINIMAX_API_COST = {
   cacheRead: 2,
   cacheWrite: 10,
 };
+
+type ProviderModelConfig = NonNullable<ProviderConfig["models"]>[number];
+
+function buildMinimaxModel(params: {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  input: ProviderModelConfig["input"];
+}): ProviderModelConfig {
+  return {
+    id: params.id,
+    name: params.name,
+    reasoning: params.reasoning,
+    input: params.input,
+    cost: MINIMAX_API_COST,
+    contextWindow: MINIMAX_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: MINIMAX_DEFAULT_MAX_TOKENS,
+  };
+}
+
+function buildMinimaxTextModel(params: {
+  id: string;
+  name: string;
+  reasoning: boolean;
+}): ProviderModelConfig {
+  return buildMinimaxModel({ ...params, input: ["text"] });
+}
 
 const XIAOMI_BASE_URL = "https://api.xiaomimimo.com/anthropic";
 export const XIAOMI_DEFAULT_MODEL_ID = "mimo-v2-flash";
@@ -80,8 +107,8 @@ const QWEN_PORTAL_DEFAULT_COST = {
   cacheWrite: 0,
 };
 
-const OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1";
-const OLLAMA_API_BASE_URL = "http://127.0.0.1:11434";
+const OLLAMA_BASE_URL = OLLAMA_NATIVE_BASE_URL;
+const OLLAMA_API_BASE_URL = OLLAMA_BASE_URL;
 const OLLAMA_DEFAULT_CONTEXT_WINDOW = 128000;
 const OLLAMA_DEFAULT_MAX_TOKENS = 8192;
 const OLLAMA_DEFAULT_COST = {
@@ -106,6 +133,17 @@ export const QIANFAN_DEFAULT_MODEL_ID = "deepseek-v3.2";
 const QIANFAN_DEFAULT_CONTEXT_WINDOW = 98304;
 const QIANFAN_DEFAULT_MAX_TOKENS = 32768;
 const QIANFAN_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
+const NVIDIA_DEFAULT_MODEL_ID = "nvidia/llama-3.1-nemotron-70b-instruct";
+const NVIDIA_DEFAULT_CONTEXT_WINDOW = 131072;
+const NVIDIA_DEFAULT_MAX_TOKENS = 4096;
+const NVIDIA_DEFAULT_COST = {
   input: 0,
   output: 0,
   cacheRead: 0,
@@ -206,6 +244,25 @@ async function discoverOllamaModels(baseUrl?: string): Promise<ModelDefinitionCo
       }
       throw fetchError;
     }
+    const data = (await response.json()) as OllamaTagsResponse;
+    if (!data.models || data.models.length === 0) {
+      console.warn("No Ollama models found on local instance");
+      return [];
+    }
+    return data.models.map((model) => {
+      const modelId = model.name;
+      const isReasoning =
+        modelId.toLowerCase().includes("r1") || modelId.toLowerCase().includes("reasoning");
+      return {
+        id: modelId,
+        name: modelId,
+        reasoning: isReasoning,
+        input: ["text"],
+        cost: OLLAMA_DEFAULT_COST,
+        contextWindow: OLLAMA_DEFAULT_CONTEXT_WINDOW,
+        maxTokens: OLLAMA_DEFAULT_MAX_TOKENS,
+      };
+    });
   } catch (error) {
     console.warn(`Failed to discover Ollama models: ${String(error)}`);
     return [];
@@ -416,54 +473,35 @@ export function normalizeProviders(params: {
 
 function buildMinimaxProvider(): ProviderConfig {
   return {
-    baseUrl: MINIMAX_API_BASE_URL,
-    api: "openai-completions",
+    baseUrl: MINIMAX_PORTAL_BASE_URL,
+    api: "anthropic-messages",
     models: [
-      {
+      buildMinimaxTextModel({
         id: MINIMAX_DEFAULT_MODEL_ID,
         name: "MiniMax M2.1",
         reasoning: false,
-        input: ["text"],
-        cost: MINIMAX_API_COST,
-        contextWindow: MINIMAX_DEFAULT_CONTEXT_WINDOW,
-        maxTokens: MINIMAX_DEFAULT_MAX_TOKENS,
-      },
-      {
+      }),
+      buildMinimaxTextModel({
         id: "MiniMax-M2.1-lightning",
         name: "MiniMax M2.1 Lightning",
         reasoning: false,
-        input: ["text"],
-        cost: MINIMAX_API_COST,
-        contextWindow: MINIMAX_DEFAULT_CONTEXT_WINDOW,
-        maxTokens: MINIMAX_DEFAULT_MAX_TOKENS,
-      },
-      {
+      }),
+      buildMinimaxModel({
         id: MINIMAX_DEFAULT_VISION_MODEL_ID,
         name: "MiniMax VL 01",
         reasoning: false,
         input: ["text", "image"],
-        cost: MINIMAX_API_COST,
-        contextWindow: MINIMAX_DEFAULT_CONTEXT_WINDOW,
-        maxTokens: MINIMAX_DEFAULT_MAX_TOKENS,
-      },
-      {
+      }),
+      buildMinimaxTextModel({
         id: "MiniMax-M2.5",
         name: "MiniMax M2.5",
         reasoning: true,
-        input: ["text"],
-        cost: MINIMAX_API_COST,
-        contextWindow: MINIMAX_DEFAULT_CONTEXT_WINDOW,
-        maxTokens: MINIMAX_DEFAULT_MAX_TOKENS,
-      },
-      {
+      }),
+      buildMinimaxTextModel({
         id: "MiniMax-M2.5-Lightning",
         name: "MiniMax M2.5 Lightning",
         reasoning: true,
-        input: ["text"],
-        cost: MINIMAX_API_COST,
-        contextWindow: MINIMAX_DEFAULT_CONTEXT_WINDOW,
-        maxTokens: MINIMAX_DEFAULT_MAX_TOKENS,
-      },
+      }),
     ],
   };
 }
@@ -473,24 +511,16 @@ function buildMinimaxPortalProvider(): ProviderConfig {
     baseUrl: MINIMAX_PORTAL_BASE_URL,
     api: "anthropic-messages",
     models: [
-      {
+      buildMinimaxTextModel({
         id: MINIMAX_DEFAULT_MODEL_ID,
         name: "MiniMax M2.1",
         reasoning: false,
-        input: ["text"],
-        cost: MINIMAX_API_COST,
-        contextWindow: MINIMAX_DEFAULT_CONTEXT_WINDOW,
-        maxTokens: MINIMAX_DEFAULT_MAX_TOKENS,
-      },
-      {
+      }),
+      buildMinimaxTextModel({
         id: "MiniMax-M2.5",
         name: "MiniMax M2.5",
         reasoning: true,
-        input: ["text"],
-        cost: MINIMAX_API_COST,
-        contextWindow: MINIMAX_DEFAULT_CONTEXT_WINDOW,
-        maxTokens: MINIMAX_DEFAULT_MAX_TOKENS,
-      },
+      }),
     ],
   };
 }
@@ -578,8 +608,8 @@ async function buildVeniceProvider(): Promise<ProviderConfig> {
 async function buildOllamaProvider(configuredBaseUrl?: string): Promise<ProviderConfig> {
   const models = await discoverOllamaModels(configuredBaseUrl);
   return {
-    baseUrl: configuredBaseUrl ?? OLLAMA_BASE_URL,
-    api: "openai-completions",
+    baseUrl: resolveOllamaApiBase(configuredBaseUrl),
+    api: "ollama",
     models,
   };
 }
@@ -645,6 +675,42 @@ export function buildQianfanProvider(): ProviderConfig {
         cost: QIANFAN_DEFAULT_COST,
         contextWindow: 119000,
         maxTokens: 64000,
+      },
+    ],
+  };
+}
+
+export function buildNvidiaProvider(): ProviderConfig {
+  return {
+    baseUrl: NVIDIA_BASE_URL,
+    api: "openai-completions",
+    models: [
+      {
+        id: NVIDIA_DEFAULT_MODEL_ID,
+        name: "NVIDIA Llama 3.1 Nemotron 70B Instruct",
+        reasoning: false,
+        input: ["text"],
+        cost: NVIDIA_DEFAULT_COST,
+        contextWindow: NVIDIA_DEFAULT_CONTEXT_WINDOW,
+        maxTokens: NVIDIA_DEFAULT_MAX_TOKENS,
+      },
+      {
+        id: "meta/llama-3.3-70b-instruct",
+        name: "Meta Llama 3.3 70B Instruct",
+        reasoning: false,
+        input: ["text"],
+        cost: NVIDIA_DEFAULT_COST,
+        contextWindow: 131072,
+        maxTokens: 4096,
+      },
+      {
+        id: "nvidia/mistral-nemo-minitron-8b-8k-instruct",
+        name: "NVIDIA Mistral NeMo Minitron 8B Instruct",
+        reasoning: false,
+        input: ["text"],
+        cost: NVIDIA_DEFAULT_COST,
+        contextWindow: 8192,
+        maxTokens: 2048,
       },
     ],
   };
@@ -792,6 +858,13 @@ export async function resolveImplicitProviders(params: {
     resolveApiKeyFromProfiles({ provider: "qianfan", store: authStore });
   if (qianfanKey) {
     providers.qianfan = { ...buildQianfanProvider(), apiKey: qianfanKey };
+  }
+
+  const nvidiaKey =
+    resolveEnvApiKeyVarName("nvidia") ??
+    resolveApiKeyFromProfiles({ provider: "nvidia", store: authStore });
+  if (nvidiaKey) {
+    providers.nvidia = { ...buildNvidiaProvider(), apiKey: nvidiaKey };
   }
 
   return providers;
