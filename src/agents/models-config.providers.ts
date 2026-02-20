@@ -195,54 +195,12 @@ async function discoverOllamaModels(baseUrl?: string): Promise<ModelDefinitionCo
   }
   try {
     const apiBase = resolveOllamaApiBase(baseUrl);
-    // Skip timeout for localhost to avoid event loop blocking during initialization
-    const isLocalhost =
-      apiBase.includes("127.0.0.1") || apiBase.includes("localhost") || apiBase.includes("::1");
-    const controller = new AbortController();
-    const timeoutId = isLocalhost ? undefined : setTimeout(() => controller.abort(), 30000);
-
-    try {
-      const response = await fetch(`${apiBase}/api/tags`, {
-        signal: controller.signal,
-      });
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-
-      if (!response.ok) {
-        console.warn(`Failed to discover Ollama models: ${response.status}`);
-        return [];
-      }
-
-      const data = (await response.json()) as OllamaTagsResponse;
-      if (!data.models || data.models.length === 0) {
-        console.warn("No Ollama models found on local instance");
-        return [];
-      }
-      return data.models.map((model) => {
-        const modelId = model.name;
-        const isReasoning =
-          modelId.toLowerCase().includes("r1") || modelId.toLowerCase().includes("reasoning");
-        return {
-          id: modelId,
-          name: modelId,
-          reasoning: isReasoning,
-          input: ["text"],
-          cost: OLLAMA_DEFAULT_COST,
-          contextWindow: OLLAMA_DEFAULT_CONTEXT_WINDOW,
-          maxTokens: OLLAMA_DEFAULT_MAX_TOKENS,
-          // Disable streaming by default for Ollama to avoid SDK issue #1205
-          // See: https://github.com/badlogic/pi-mono/issues/1205
-          params: {
-            streaming: false,
-          },
-        };
-      });
-    } catch (fetchError) {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-      throw fetchError;
+    const response = await fetch(`${apiBase}/api/tags`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      console.warn(`Failed to discover Ollama models: ${response.status}`);
+      return [];
     }
     const data = (await response.json()) as OllamaTagsResponse;
     if (!data.models || data.models.length === 0) {
@@ -283,57 +241,39 @@ async function discoverVllmModels(
 
   try {
     const trimmedApiKey = apiKey?.trim();
-    // Skip timeout for localhost to avoid event loop blocking during initialization
-    const isLocalhost =
-      url.includes("127.0.0.1") || url.includes("localhost") || url.includes("::1");
-    const controller = new AbortController();
-    const timeoutId = isLocalhost ? undefined : setTimeout(() => controller.abort(), 30000);
-
-    try {
-      const response = await fetch(url, {
-        headers: trimmedApiKey ? { Authorization: `Bearer ${trimmedApiKey}` } : undefined,
-        signal: controller.signal,
-      });
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-
-      if (!response.ok) {
-        console.warn(`Failed to discover vLLM models: ${response.status}`);
-        return [];
-      }
-
-      const data = (await response.json()) as VllmModelsResponse;
-      const models = data.data ?? [];
-      if (models.length === 0) {
-        console.warn("No vLLM models found on local instance");
-        return [];
-      }
-
-      return models
-        .map((m) => ({ id: typeof m.id === "string" ? m.id.trim() : "" }))
-        .filter((m) => Boolean(m.id))
-        .map((m) => {
-          const modelId = m.id;
-          const lower = modelId.toLowerCase();
-          const isReasoning =
-            lower.includes("r1") || lower.includes("reasoning") || lower.includes("think");
-          return {
-            id: modelId,
-            name: modelId,
-            reasoning: isReasoning,
-            input: ["text"],
-            cost: VLLM_DEFAULT_COST,
-            contextWindow: VLLM_DEFAULT_CONTEXT_WINDOW,
-            maxTokens: VLLM_DEFAULT_MAX_TOKENS,
-          } satisfies ModelDefinitionConfig;
-        });
-    } catch (fetchError) {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-      throw fetchError;
+    const response = await fetch(url, {
+      headers: trimmedApiKey ? { Authorization: `Bearer ${trimmedApiKey}` } : undefined,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      console.warn(`Failed to discover vLLM models: ${response.status}`);
+      return [];
     }
+    const data = (await response.json()) as VllmModelsResponse;
+    const models = data.data ?? [];
+    if (models.length === 0) {
+      console.warn("No vLLM models found on local instance");
+      return [];
+    }
+
+    return models
+      .map((m) => ({ id: typeof m.id === "string" ? m.id.trim() : "" }))
+      .filter((m) => Boolean(m.id))
+      .map((m) => {
+        const modelId = m.id;
+        const lower = modelId.toLowerCase();
+        const isReasoning =
+          lower.includes("r1") || lower.includes("reasoning") || lower.includes("think");
+        return {
+          id: modelId,
+          name: modelId,
+          reasoning: isReasoning,
+          input: ["text"],
+          cost: VLLM_DEFAULT_COST,
+          contextWindow: VLLM_DEFAULT_CONTEXT_WINDOW,
+          maxTokens: VLLM_DEFAULT_MAX_TOKENS,
+        } satisfies ModelDefinitionConfig;
+      });
   } catch (error) {
     console.warn(`Failed to discover vLLM models: ${String(error)}`);
     return [];
